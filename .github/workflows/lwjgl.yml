@@ -1,0 +1,227 @@
+name: LWJGL Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+env:
+  AWS_DEFAULT_REGION: us-east-1
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  S3_PARAMS: --cache-control "public,must-revalidate,proxy-revalidate,max-age=0"
+  CMAKE_BUILD_PARALLEL_LEVEL: 4
+  SHADERC_PARAMS: -DSHADERC_SKIP_INSTALL=ON -DSHADERC_SKIP_TESTS=ON
+
+jobs:
+  linux:
+    name: Linux
+    runs-on: ubuntu-latest
+    container:
+      image: almalinux:8
+    strategy:
+      fail-fast: false
+      matrix:
+        ARCH: [ x64 ]
+        include:
+          - ARCH: x64
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Install git
+        run: dnf -y install git
+      - name: Clone repository
+        run: git clone --depth 3 https://github.com/${{ github.repository }}.git .
+      - name: Install build dependencies
+        run: |
+          dnf -y install epel-release wget
+          wget https://pkgs.sysadmins.ws/el8/base/x86_64/raven-release-1.0.1-1.el8.noarch.rpm
+          rpm -ivh raven-release-1.0.1-1.el8.noarch.rpm
+          dnf config-manager --set-enabled powertools
+          dnf config-manager --set-enabled raven-extras
+          dnf -y update
+          dnf -y install gcc-toolset-15-gcc gcc-toolset-15-gcc-c++ python3 cmake awscli
+      - name: Install shaderc dependencies
+        run: python3 utils/git-sync-deps
+      - name: Configure build
+        run: |
+          source /opt/rh/gcc-toolset-15/enable || true
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_FLAGS="-U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0" \
+            $SHADERC_PARAMS
+      - name: Build
+        run: |
+          source /opt/rh/gcc-toolset-15/enable || true
+          cmake --build build
+          strip build/libshaderc/libshaderc_shared.so
+      - name: Upload artifact
+        run: aws s3 cp build/libshaderc/libshaderc_shared.so s3://lwjgl-build/nightly/linux/${{matrix.ARCH}}/libshaderc.so ${{env.S3_PARAMS}}
+      - name: Upload git revision
+        run: |
+          git config --global --add safe.directory $PWD
+          git log --first-parent --pretty=format:%H HEAD~2..HEAD~1 > libshaderc.so.git
+          aws s3 cp libshaderc.so.git s3://lwjgl-build/nightly/linux/${{matrix.ARCH}}/ ${{env.S3_PARAMS}}
+
+  linux-cross:
+    name: Linux Cross
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        ARCH: [arm32, arm64, ppc64le, riscv64]
+        include:
+          # -----
+          - ARCH: arm32
+            CROSS_ARCH: armhf
+            TRIPLET: arm-linux-gnueabihf
+            CMAKE_FLAGS:
+          # -----
+          - ARCH: arm64
+            CROSS_ARCH: arm64
+            TRIPLET: aarch64-linux-gnu
+            CMAKE_FLAGS:
+          # ----
+          - ARCH: ppc64le
+            CROSS_ARCH: ppc64el
+            TRIPLET: powerpc64le-linux-gnu
+            CMAKE_FLAGS:
+          # -----
+          - ARCH: riscv64
+            CROSS_ARCH: riscv64
+            TRIPLET: riscv64-linux-gnu
+            # Some weirdness with atomics
+            CMAKE_FLAGS: LDFLAGS=-pthread
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 3
+      - name: Install dependencies
+        run: |
+          DEBIAN_FRONTEND=noninteractive sudo apt-get -yq update
+          DEBIAN_FRONTEND=noninteractive sudo apt-get -yq install awscli cmake \
+            gcc-12-${{matrix.TRIPLET}} \
+            g++-12-${{matrix.TRIPLET}} \
+            libc6-dev-${{matrix.CROSS_ARCH}}-cross
+          python3 utils/git-sync-deps
+      - name: Configure build
+        run: |
+          export PKG_CONFIG_LIBDIR="/usr/lib/${{matrix.TRIPLET}}/pkgconfig:/usr/share/pkgconfig"
+          CC=${{matrix.TRIPLET}}-gcc-12 CXX=${{matrix.TRIPLET}}-g++-12 ${{matrix.CMAKE_FLAGS}} cmake -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_FLAGS="-U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0" \
+            $SHADERC_PARAMS
+      - name: Build
+        run: |
+          cmake --build build
+          ${{matrix.TRIPLET}}-strip build/libshaderc/libshaderc_shared.so
+      - name: Upload artifact
+        run: aws s3 cp build/libshaderc/libshaderc_shared.so s3://lwjgl-build/nightly/linux/${{matrix.ARCH}}/libshaderc.so ${{env.S3_PARAMS}}
+      - name: Upload git revision
+        run: |
+          git config --global --add safe.directory $(pwd)
+          git log --first-parent --pretty=format:%H HEAD~2..HEAD~1 > libshaderc.so.git
+          aws s3 cp libshaderc.so.git s3://lwjgl-build/nightly/linux/${{matrix.ARCH}}/ ${{env.S3_PARAMS}}
+
+  freebsd-cross:
+    name: FreeBSD Cross
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 3
+      - name: Build
+        uses: cross-platform-actions/action@v0.30.0
+        with:
+          operating_system: freebsd
+          architecture: x86-64
+          version: '13.5'
+          memory: 4G
+          shell: bash
+          environment_variables: SHADERC_PARAMS
+          run: |
+            sudo pkg install -y git cmake gmake python3
+            python3 utils/git-sync-deps
+            cmake -B build $SHADERC_PARAMS -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_FLAGS="-U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0"
+            cmake --build build
+            strip build/libshaderc/libshaderc_shared.so
+      - name: Upload artifact
+        run: aws s3 cp build/libshaderc/libshaderc_shared.so s3://lwjgl-build/nightly/freebsd/x64/libshaderc.so ${{env.S3_PARAMS}}
+      - name: Upload git revision
+        run: |
+          git config --global --add safe.directory $PWD
+          git log --first-parent --pretty=format:%H HEAD~2..HEAD~1 > libshaderc.so.git
+          aws s3 cp libshaderc.so.git s3://lwjgl-build/nightly/freebsd/x64/ ${{env.S3_PARAMS}}
+
+  macos:
+    name: macOS
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        ARCH: [x64, arm64]
+        include:
+          - ARCH: x64
+            CMAKE_PARAMS: -DCMAKE_OSX_DEPLOYMENT_TARGET=10.15 -DCMAKE_OSX_ARCHITECTURES=x86_64
+          - ARCH: arm64
+            CMAKE_PARAMS: -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 -DCMAKE_OSX_ARCHITECTURES=arm64
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 3
+      - name: Install dependencies
+        run: python3 utils/git-sync-deps
+      - name: Configure build
+        run: cmake -B build $SHADERC_PARAMS -DCMAKE_BUILD_TYPE=Release ${{matrix.CMAKE_PARAMS}}
+      - name: Build
+        run: |
+          cmake --build build
+          strip -u -r build/libshaderc/libshaderc_shared.dylib
+      - name: Upload artifact
+        run: aws s3 cp build/libshaderc/libshaderc_shared.dylib s3://lwjgl-build/nightly/macosx/${{matrix.ARCH}}/libshaderc.dylib ${{env.S3_PARAMS}}
+      - name: Upload git revision
+        run: |
+          git log --first-parent --pretty=format:%H HEAD~2..HEAD~1 > libshaderc.dylib.git
+          aws s3 cp libshaderc.dylib.git s3://lwjgl-build/nightly/macosx/${{matrix.ARCH}}/ ${{env.S3_PARAMS}}
+
+  windows:
+    name: Windows
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        ARCH: [x86, x64, arm64]
+        include:
+          - ARCH: x86
+            PLATFORM: Win32
+          - ARCH: x64
+            PLATFORM: x64
+          - ARCH: arm64
+            PLATFORM: ARM64
+    defaults:
+      run:
+        shell: cmd
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 3
+      - name: Install dependencies
+        run: python utils/git-sync-deps
+      - name: Configure build
+        #-T ClangCL
+        run: cmake -B build -G "Visual Studio 17 2022" -A ${{matrix.PLATFORM}} %SHADERC_PARAMS%
+      - name: Build
+        run: cmake --build build --parallel --config Release
+      - name: Upload artifact
+        run: aws s3 cp build\libshaderc\Release\shaderc_shared.dll s3://lwjgl-build/nightly/windows/${{matrix.ARCH}}/shaderc.dll ${{env.S3_PARAMS}}
+      - name: Upload git revision
+        run: |
+          git log --first-parent --pretty=format:%%H HEAD~2..HEAD~1 > shaderc.dll.git
+          aws s3 cp shaderc.dll.git s3://lwjgl-build/nightly/windows/${{matrix.ARCH}}/ ${{env.S3_PARAMS}}
