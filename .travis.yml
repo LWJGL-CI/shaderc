@@ -1,0 +1,135 @@
+git:
+  depth: 3
+env:
+  global:
+  - secure: "e8t3Ce2W0NWzxb7biDyFIDJSNmt8tpKl6wFgnc0/XXGqVtz9zP5y7t3ZA3Y5SM+gAhzxI+IyMH8x8ReY+NYF7hZO1RvuKFC7DzOYtSwx9WqRFyWnCMDFwKnHrkq65//Dhs0tVseVj8wwIp1dL/elzl0m1K7Je4QeEeRhIujS5DsCOEoPbD9mudlEf21CBAyygYyqkgtfCQci0ARqafXUAcb26n2csVdEjES/gX0EWiVveexOqi3+I9BLGI42I8ZzrO8tcAAqpB8KmRRenWvBtjtjEZR8lwTaLROUsvr1XZ9nKIl0FZNnujF5OSytltM7aqhIG3EtCnbx34C/oPQtUszumkC0ONl4YWcvJALOfvc6+OLtvkFcTVPq2YK+jNy8kqcWL2pwu8W0P7rR15SsqsJfCCGwTka15mhBBzHO3pjabIDSpy1fObabIKr0Ybi/JHiwRHFXAUSHpZtIDxPX+hDC+7x07+GTz+/pLNCE/qO5EK/21gkHk5uf0UMgj2Og84cAyFohY6rGTZi7CkgN/dvbKKDN1y+E7tWmzbDIAQqGq9q38P8kNH506guLYEk0ka6xINhwHAk9VB++5O9aGmuvAnivYA6ZOi9Wa7KCS6XKlZ2KC94Sa92phnxOvOuJSN4ECo+PfGGKwEXFGvmciiKqFrj9B0cY173c7LGdoW4="
+  - secure: "dWVMfWp7INYadFYRFXJ7lEUaBl+tJdzjTpCCVyUGBpJJdB/4WJ5loyVUoXieTTFG+xhERhlEu+zwr3YsEZoT+i0vbWzBv15AiVBiPcoCVRAC29EHiwAAaSoQk2EK9OODcozidKSbQnLnXZ76wxZIosOArjLRFZS3MZOy+qAP0GBtVmad+PWfrNyquROBubKMfzDLcRRZMFQy93v8qKxUqQ5D/3Enh6XpLjH4cb+UKhpqaRmV1UIcLAiwbYafmwm7h7jC1m427MnvxqpQjTVNdNP1iTD7g7CgqSp/sj6FWm+fNSMRQsZ7G5+ghxthX5vibCqB/40XvEDV82yd5n+iLTzxSp6qz1ct5DriQQ8w45bPvqVNBfE8d/J/nrilAM2lKJruyNZTukSUya1jEyKPESZO+XWNtULD6iktT/gHLUxRE50Xf9fjMD52AheipyzfI8fCl1SaD++Pw/dRdLutwqwFNLS4aqaF6utKVI2Bc1CBh9M+Fci/3587ObY4yt6Jw2okjl2UQEXoqzjvkZ3Ale+ekdCtNyVWi28H1QnLTEl2LgFegq2YL598bWhaapm1hISTtYRs5pUY39IfWyad0huvfoh9vEiuZ3Y9c7zkN6842leX7DCg1CosPJrgPPEW+KROVzx1e5hocPjqRkbT/TxZmvsMl2YeBfTnIWz9r9E="
+  - AWS_DEFAULT_REGION: "us-east-1"
+  - S3_PARAMS: '"--acl public-read --cache-control \"public,must-revalidate,proxy-revalidate,max-age=0\""'
+  - CMAKE_BUILD_PARALLEL_LEVEL: 4
+  - LINUX_CMAKE_PARAMS: '"-DSHADERC_ENABLE_SPVC=ON -DSHADERC_SKIP_INSTALL=ON -DSHADERC_SKIP_TESTS=ON -DCMAKE_BUILD_TYPE=Release"'
+
+matrix:
+  include:
+
+  # -----------------
+  - name: "Linux x64"
+  # -----------------
+
+    dist: xenial
+    language: c
+    compiler: gcc
+
+    addons:
+      apt:
+        packages:
+        - cmake
+        - gcc-4.8
+        - g++-4.8
+
+    before_install:
+    - pip install --user awscli
+    - export PATH=$PATH:$HOME/.local/bin
+
+    script:
+    - python3 utils/git-sync-deps
+    - mkdir build
+    - cd build
+    - "CC=gcc-4.8 CXX=g++-4.8 cmake $LINUX_CMAKE_PARAMS -DCMAKE_C_FLAGS=\"-U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0\" .."
+    - cmake --build .
+    - strip libshaderc/libshaderc_shared.so
+    - strip libshaderc_spvc/libshaderc_spvc_shared.so
+    - "git log --first-parent --pretty=format:%H HEAD~2..HEAD~1 > revision.git"
+    - "aws s3 cp libshaderc/libshaderc_shared.so s3://build.lwjgl.org/nightly/linux/x64/libshaderc.so $S3_PARAMS"
+    - "aws s3 cp libshaderc_spvc/libshaderc_spvc_shared.so s3://build.lwjgl.org/nightly/linux/x64/libshaderc_spvc.so $S3_PARAMS"
+    - "aws s3 cp revision.git s3://build.lwjgl.org/nightly/linux/x64/libshaderc.so.git $S3_PARAMS"
+
+  # -----------------
+  - name: "Linux arm32"
+  # -----------------
+    dist: xenial
+    language: c
+    compiler: gcc
+
+    addons:
+      apt:
+        packages:
+        - cmake
+        - gcc-4.8-arm-linux-gnueabihf
+        - g++-4.8-arm-linux-gnueabihf
+        - libc6-dev-armhf-cross
+
+    before_install:
+    - pip install --user awscli
+    - export PATH=$PATH:$HOME/.local/bin
+
+    script:
+    - python3 utils/git-sync-deps
+    - mkdir build
+    - cd build
+    - "CC=arm-linux-gnueabihf-gcc-4.8 CXX=arm-linux-gnueabihf-g++-4.8 cmake $LINUX_CMAKE_PARAMS -DCMAKE_C_FLAGS=\"-U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0\" .."
+    - cmake --build .
+    - arm-linux-gnueabihf-strip libshaderc/libshaderc_shared.so
+    - arm-linux-gnueabihf-strip libshaderc_spvc/libshaderc_spvc_shared.so
+    - "git log --first-parent --pretty=format:%H HEAD~2..HEAD~1 > revision.git"
+    - "aws s3 cp libshaderc/libshaderc_shared.so s3://build.lwjgl.org/nightly/linux/arm32/libshaderc.so $S3_PARAMS"
+    - "aws s3 cp libshaderc_spvc/libshaderc_spvc_shared.so s3://build.lwjgl.org/nightly/linux/arm32/libshaderc_spvc.so $S3_PARAMS"
+    - "aws s3 cp revision.git s3://build.lwjgl.org/nightly/linux/arm32/libshaderc.so.git $S3_PARAMS"
+
+  # -----------------
+  - name: "Linux arm64"
+  # -----------------
+    dist: xenial
+    language: c
+    compiler: gcc
+
+    addons:
+      apt:
+        packages:
+        - cmake
+        - gcc-4.8-aarch64-linux-gnu
+        - g++-4.8-aarch64-linux-gnu
+        - libc6-dev-arm64-cross
+
+    before_install:
+    - pip install --user awscli
+    - export PATH=$PATH:$HOME/.local/bin
+
+    script:
+    - python3 utils/git-sync-deps
+    - mkdir build
+    - cd build
+    - "CC=aarch64-linux-gnu-gcc-4.8 CXX=aarch64-linux-gnu-g++-4.8 cmake $LINUX_CMAKE_PARAMS -DCMAKE_C_FLAGS=\"-U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0\" .."
+    - cmake --build .
+    - aarch64-linux-gnu-strip libshaderc/libshaderc_shared.so
+    - aarch64-linux-gnu-strip libshaderc_spvc/libshaderc_spvc_shared.so
+    - "git log --first-parent --pretty=format:%H HEAD~2..HEAD~1 > revision.git"
+    - "aws s3 cp libshaderc/libshaderc_shared.so s3://build.lwjgl.org/nightly/linux/arm64/libshaderc.so $S3_PARAMS"
+    - "aws s3 cp libshaderc_spvc/libshaderc_spvc_shared.so s3://build.lwjgl.org/nightly/linux/arm64/libshaderc_spvc.so $S3_PARAMS"
+    - "aws s3 cp revision.git s3://build.lwjgl.org/nightly/linux/arm64/libshaderc.so.git $S3_PARAMS"
+
+  # -----------------
+  - name: "macOS"
+  # -----------------
+    language: objective-c
+    osx_image: xcode11.3
+    compiler: clang
+
+    before_install:
+    - brew update
+
+    install:
+    - brew install awscli
+
+    script:
+    - python3 utils/git-sync-deps
+    - mkdir build
+    - cd build
+    - "cmake $LINUX_CMAKE_PARAMS -DCMAKE_OSX_DEPLOYMENT_TARGET=10.9 .."
+    - cmake --build .
+    - strip -u -r libshaderc/libshaderc_shared.dylib
+    - strip -u -r libshaderc_spvc/libshaderc_spvc_shared.dylib
+    - "git log --first-parent --pretty=format:%H HEAD~2..HEAD~1 > revision.git"
+    - "aws s3 cp libshaderc/libshaderc_shared.dylib s3://build.lwjgl.org/nightly/macosx/x64/libshaderc.dylib $S3_PARAMS"
+    - "aws s3 cp libshaderc_spvc/libshaderc_spvc_shared.dylib s3://build.lwjgl.org/nightly/macosx/x64/libshaderc_spvc.dylib $S3_PARAMS"
+    - "aws s3 cp revision.git s3://build.lwjgl.org/nightly/macosx/x64/libshaderc.dylib.git $S3_PARAMS"
