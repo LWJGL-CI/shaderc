@@ -63,14 +63,67 @@ endif(SHADERC_ENABLE_INSTALL)
 
 find_package(Threads)
 set(SHADERC_LIBS
-  glslang ${CMAKE_THREAD_LIBS_INIT}
+  glslang
+  glslang-default-resource-limits
+  ${CMAKE_THREAD_LIBS_INIT}
   shaderc_util
   SPIRV # from glslang
   SPIRV-Tools
 )
+set(SHADERC_SHARED_BASE_LIBS
+  ${CMAKE_THREAD_LIBS_INIT}
+  shaderc_util
+  SPIRV
+)
 
-target_link_libraries(shaderc PRIVATE ${SHADERC_LIBS})
-target_link_libraries(shaderc_shared PRIVATE ${SHADERC_LIBS})
+# Link libraries as usual (static deps folded into the shared library by the linker).
+target_link_libraries(shaderc PUBLIC ${SHADERC_LIBS})
+target_link_libraries(shaderc_shared PUBLIC ${SHADERC_SHARED_BASE_LIBS})
+
+# Ensure dependency C APIs are exported from the monolithic shared library.
+if (TARGET glslang)
+  if (WIN32)
+    # On Windows we need explicit dllexport from the dependency sources.
+    target_compile_definitions(glslang PRIVATE GLSLANG_IS_SHARED_LIBRARY=1 GLSLANG_EXPORTING=1)
+  else()
+    # On ELF/Mach-O, marking as shared enables GLSLANG_EXPORT visibility attributes.
+    target_compile_definitions(glslang PRIVATE GLSLANG_IS_SHARED_LIBRARY=1)
+  endif()
+endif()
+if (TARGET glslang-default-resource-limits)
+  if (WIN32)
+    target_compile_definitions(glslang-default-resource-limits PRIVATE GLSLANG_IS_SHARED_LIBRARY=1 GLSLANG_EXPORTING=1)
+  else()
+    target_compile_definitions(glslang-default-resource-limits PRIVATE GLSLANG_IS_SHARED_LIBRARY=1)
+  endif()
+endif()
+if (TARGET SPIRV-Tools-static)
+  target_compile_definitions(SPIRV-Tools-static PRIVATE SPIRV_TOOLS_SHAREDLIB SPIRV_TOOLS_IMPLEMENTATION)
+elseif (TARGET SPIRV-Tools)
+  target_compile_definitions(SPIRV-Tools PRIVATE SPIRV_TOOLS_SHAREDLIB SPIRV_TOOLS_IMPLEMENTATION)
+endif()
+if (TARGET SPIRV-Tools-opt)
+  target_compile_definitions(SPIRV-Tools-opt PRIVATE SPIRV_TOOLS_SHAREDLIB SPIRV_TOOLS_IMPLEMENTATION)
+endif()
+
+# Ensure dependency C APIs are included in the shared library even if unreferenced.
+if (WIN32 AND MSVC)
+  target_link_options(shaderc_shared PRIVATE
+    "/WHOLEARCHIVE:$<TARGET_FILE:glslang>"
+    "/WHOLEARCHIVE:$<TARGET_FILE:glslang-default-resource-limits>"
+    "/WHOLEARCHIVE:$<TARGET_FILE:SPIRV-Tools>"
+    "/WHOLEARCHIVE:$<TARGET_FILE:SPIRV-Tools-opt>")
+elseif(APPLE)
+  target_link_options(shaderc_shared PRIVATE
+    "-Wl,-force_load,$<TARGET_FILE:glslang>"
+    "-Wl,-force_load,$<TARGET_FILE:glslang-default-resource-limits>"
+    "-Wl,-force_load,$<TARGET_FILE:SPIRV-Tools>"
+    "-Wl,-force_load,$<TARGET_FILE:SPIRV-Tools-opt>")
+else()
+  # GCC/Clang on ELF platforms
+  target_link_libraries(shaderc_shared PRIVATE
+    "-Wl,--whole-archive" glslang glslang-default-resource-limits SPIRV-Tools SPIRV-Tools-opt "-Wl,--no-whole-archive")
+endif()
 
 shaderc_add_tests(
   TEST_PREFIX shaderc

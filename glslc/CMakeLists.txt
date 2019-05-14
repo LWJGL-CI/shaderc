@@ -53,6 +53,12 @@ if(SHADERC_ENABLE_EXECUTABLES)
   shaderc_default_compile_options(glslc_exe)
   target_include_directories(glslc_exe PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/.. ${spirv-tools_SOURCE_DIR}/include)
   set_target_properties(glslc_exe PROPERTIES OUTPUT_NAME glslc)
+  # On MSVC, exporting symbols from static deps can cause the executable to
+  # emit an import library. Give it a distinct name to avoid colliding with
+  # the static library target of the same base name.
+  if (MSVC)
+    set_target_properties(glslc_exe PROPERTIES ARCHIVE_OUTPUT_NAME glslc_exe)
+  endif()
   target_link_libraries(glslc_exe PRIVATE glslc shaderc_util shaderc)
   add_dependencies(glslc_exe build-version)
 endif(SHADERC_ENABLE_EXECUTABLES)
