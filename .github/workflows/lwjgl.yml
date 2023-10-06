@@ -69,7 +69,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ARCH: [arm32, arm64]
+        ARCH: [arm32, arm64, riscv64]
         include:
           - ARCH: arm32
             PACKAGES: gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf libc6-dev-armhf-cross
@@ -81,6 +81,11 @@ jobs:
             CC: CC=aarch64-linux-gnu-gcc CXX=aarch64-linux-gnu-g++
             CMAKE_PARAMS: -DCMAKE_TOOLCHAIN_FILE=../XCompile-lwjgl.cmake -DSYSTEM_NAME=Linux -DSYSTEM_PROCESSOR=aarch64
             STRIP: aarch64-linux-gnu-strip
+          - ARCH: riscv64
+            PACKAGES: gcc-riscv64-linux-gnu g++-riscv64-linux-gnu libc6-dev-riscv64-cross
+            CC: CC=riscv64-linux-gnu-gcc CXX=riscv64-linux-gnu-g++
+            CMAKE_PARAMS: -DCMAKE_TOOLCHAIN_FILE=../XCompile-lwjgl.cmake -DSYSTEM_NAME=Linux -DSYSTEM_PROCESSOR=riscv64
+            STRIP: riscv64-linux-gnu-strip
     steps:
       - run: |
           apt-get -y update
